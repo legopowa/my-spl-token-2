@@ -1,0 +1,21 @@
+[toolchain]
+
+[features]
+seeds = false
+skip-lint = false
+
+[programs.localnet]
+spl_token_minter = "FFxjv61p5USpF6PntTJ8AQgMLybjFwCVgyzwGxUsSZXh"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "devnet"
+wallet = "./id.json"
+
+[scripts]
+test = "python3 tests/test.py"
+#test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+mint = "yarn ts-node scripts/mint.ts"
+
