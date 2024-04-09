@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.1;
+
+contract LamportValidator {
+    struct AccumulatedData {
+        bytes32[2][256] currentpub;
+        bytes[256] sig;
+        uint256 currentPubIndex;
+        uint256 sigIndex;
+    }
+
+    mapping(address => AccumulatedData) private pendingValidations;
+
+    enum KeyType { NONE, MASTER }
+    struct KeyInfo {
+        KeyType keyType;
+        bytes32 nextPKH;
+    }
+
+    mapping(bytes32 => KeyInfo) public keyData;
+
+    bool initialized = true;
+
+    function startVerification() public {
+        // Initialize the indices and arrays for a new verification process
+        pendingValidations[msg.sender] = AccumulatedData({
+            currentPubIndex: 0,
+            sigIndex: 0
+        });
+    }
+
+    function submitCurrentPubChunk(bytes32[2][32] calldata chunk, uint256 chunkSize) public {
+        require(chunkSize <= 32, "Chunk size is too large");
+        AccumulatedData storage data = pendingValidations[msg.sender];
+        for (uint256 i = 0; i < chunkSize; i++) {
+            data.currentpub[data.currentPubIndex++] = chunk[i];
+        }
+    }
+
+    function submitSigChunk(bytes[32] calldata chunk, uint256 chunkSize) public {
+        require(chunkSize <= 32, "Chunk size is too large");
+        AccumulatedData storage data = pendingValidations[msg.sender];
+        for (uint256 i = 0; i < chunkSize; i++) {
+            data.sig[data.sigIndex++] = chunk[i];
+        }
+    }
+
+  
+
+    function verify_u256(uint256 hashedData, bytes[256] memory sig, bytes32[2][256] memory currentpub) internal pure returns (bool) {
+        // Implement signature verification logic here
+        return true;
+    }
+
+    function updateKey(bytes32 pkh, bytes32 nextPKH) internal {
+        keyData[pkh].nextPKH = nextPKH;
+    }
+
+    // Additional helper functions as needed
+}

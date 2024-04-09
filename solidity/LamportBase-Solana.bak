@@ -79,11 +79,8 @@ contract LamportBase2 {
     // function wipeAccumulatedData() public {
     //     delete pendingValidations[tx.accounts.submitter.key];
     // }
-    address public submitterKey;
-
-    function wipeAccumulatedData() private {
+    function wipeAccumulatedData(address submitterKey) private {
         delete pendingValidations[submitterKey];
-        submitterKey = address(0);
     }
     // Function to perform onlyLamportMaster checks
     // function performLamportMasterCheck(
@@ -109,52 +106,14 @@ contract LamportBase2 {
     //         return true;
     //     }
     // }
-    // lamport 'verify' logic
-    function verify_u256(
-        uint256 bits,
-        bytes[256] calldata sig,
-        bytes32[2][256] calldata pub
-    ) public pure returns (bool) {
-        unchecked {
-            for (uint256 i = 0; i < 256; i++) {
-                if (
-                    pub[i][((bits & (1 << (255 - i))) > 0) ? 1 : 0] !=
-                    keccak256(sig[i])
-                ) return false;
-            }
-
-            return true;
-        }
-    }
-    function updateKey(bytes32 oldPKH, bytes32 newPKH) internal {
-        require(keyData[oldPKH].pkh != 0, "LamportBase: No such key");
-
-        // Update the public key hash in the key data mapping
-        Key memory updatedKey = Key(keyData[oldPKH].keyType, newPKH);
-        keyData[newPKH] = updatedKey;
-
-        // Remove the old key from key data
-        delete keyData[oldPKH];
-
-        // Update the public key hash in the keys array
-        for (uint i = 0; i < keys.length; i++) {
-            if (keys[i].pkh == oldPKH) {
-                keys[i] = updatedKey;
-                break;
-            }
-        }
-
-        emit PkhUpdated(updatedKey.keyType, oldPKH, newPKH);
-    }
     @signer(submitter)
     function performLamportMasterCheck(bytes32 nextPKH, bytes memory prepacked) external returns (bool) {
         require(initialized, "LamportBase: not initialized");
-        submitterKey = tx.accounts.submitter.key;
         AccumulatedData storage data = pendingValidations[tx.accounts.submitter.key];
 
         bytes32 pkh = keccak256(abi.encodePacked(data.currentpub));
         if (keyData[pkh].keyType != KeyType.MASTER) {
-            wipeAccumulatedData();
+            wipeAccumulatedData(tx.accounts.submitter.key);
             return false;
         }
 
@@ -162,35 +121,11 @@ contract LamportBase2 {
         bool verificationResult = verify_u256(hashedData, data.sig, data.currentpub);
 
         if (!verificationResult) {
-            wipeAccumulatedData();
+            wipeAccumulatedData(tx.accounts.submitter.key);
             return false;
         } else {
             updateKey(pkh, nextPKH);
-            wipeAccumulatedData();
-            return true;
-        }
-    }
-
-    function performLamportMasterCheckInternal(bytes32 nextPKH, bytes memory prepacked) internal returns (bool) {
-        require(initialized, "LamportBase: not initialized");
-        AccumulatedData storage data = pendingValidations[submitterKey];
-        //submitterKey = tx.accounts.submitter.key;
-
-        bytes32 pkh = keccak256(abi.encodePacked(data.currentpub));
-        if (keyData[pkh].keyType != KeyType.MASTER) {
-            wipeAccumulatedData();
-            return false;
-        }
-
-        uint256 hashedData = uint256(keccak256(abi.encodePacked(prepacked, nextPKH)));
-        bool verificationResult = verify_u256(hashedData, data.sig, data.currentpub);
-
-        if (!verificationResult) {
-            wipeAccumulatedData();
-            return false;
-        } else {
-            updateKey(pkh, nextPKH);
-            wipeAccumulatedData();
+            wipeAccumulatedData(tx.accounts.submitter.key);
             return true;
         }
     }
@@ -222,13 +157,11 @@ contract LamportBase2 {
     @signer(submitter)
     function performLamportOracleCheck(bytes32 nextPKH, bytes memory prepacked) external returns (bool) {
         require(initialized, "LamportBase: not initialized");
-        submitterKey = tx.accounts.submitter.key;
-
         AccumulatedData storage data = pendingValidations[tx.accounts.submitter.key];
 
         bytes32 pkh = keccak256(abi.encodePacked(data.currentpub));
         if (keyData[pkh].keyType != KeyType.ORACLE) {
-            wipeAccumulatedData();
+            wipeAccumulatedData(tx.accounts.submitter.key);
             return false;
         }
 
@@ -236,10 +169,10 @@ contract LamportBase2 {
         bool verificationResult = verify_u256(hashedData, data.sig, data.currentpub);
 
         if (!verificationResult) {
-            wipeAccumulatedData();
+            wipeAccumulatedData(tx.accounts.submitter.key);
             return false;
         } else {
-            wipeAccumulatedData();
+            wipeAccumulatedData(tx.accounts.submitter.key);
             updateKey(pkh, nextPKH);
             return true;
         }
@@ -310,51 +243,38 @@ contract LamportBase2 {
     bytes32 private storedNextPKH;
     @signer(submitter)
     function deleteKeyByIndexStepOne(
+        address submitter,
         bytes32 nextPKH,
         uint256 keyIndex
     )
         external
-
+        onlyLamportMaster(
+            submitter,
+            nextPKH,
+            abi.encodePacked(keyIndex)
+        )
     {
-        bytes memory prepacked = abi.encodePacked(keyIndex);
-        submitterKey = tx.accounts.submitter.key;
-
-        bool lamportCheckPassed = performLamportMasterCheckInternal(
-            nextPKH, 
-            prepacked
-        );
-
-        // Require that the Lamport Master check passes
-        require(lamportCheckPassed, "Lamport Master validation failed");
         // Save the used deleteKeyHash in a global variable
         lastUsedDeleteKeyIndex = keyIndex;
         storedNextPKH = nextPKH;
-        wipeAccumulatedData();
-
     }
-
     @signer(submitter)
     function deleteKeyByIndexStepTwo(
+        address submitter,
         bytes32 nextPKH,
         uint256 keyIndex
     )
         external
-
+        onlyLamportMaster(
+            submitter,
+            nextPKH,
+            abi.encodePacked(keyIndex)
+        )
     {
-        bytes memory prepacked = abi.encodePacked(keyIndex);
-        submitterKey = tx.accounts.submitter.key;
-
-        bool lamportCheckPassed = performLamportMasterCheckInternal(
-            nextPKH, 
-            prepacked
-        );
-        require(lamportCheckPassed, "Lamport Master validation failed");
-
         AccumulatedData storage data = pendingValidations[tx.accounts.submitter.key];
-
+  
+      
         // Calculate the current public key hash (currentPKH)
-
-
         bytes32 currentPKH = keccak256(abi.encodePacked(data.currentpub));
         
         // Check if storedNextPKH is not the same as the current PKH
@@ -392,51 +312,41 @@ contract LamportBase2 {
         // Reset the tracking variables
         lastUsedDeleteKeyIndex = 0;
         storedNextPKH = bytes32(0);
-        wipeAccumulatedData();
-
     }
 
     @signer(submitter)
     function deleteKeyByPKHStepOne(
+        address submitter,
         bytes32 nextPKH,
         bytes32 deleteKeyHash
     )
         external
-
+        onlyLamportMaster(
+            submitter,
+            nextPKH,
+            abi.encodePacked(deleteKeyHash)
+        )
     {
-        bytes memory prepacked = abi.encodePacked(deleteKeyHash);
-        submitterKey = tx.accounts.submitter.key;
-
-        bool lamportCheckPassed = performLamportMasterCheckInternal(
-            nextPKH, 
-            prepacked
-        );
-        require(lamportCheckPassed, "Lamport Master validation failed");
         // Save the used deleteKeyHash in a global variable
         lastUsedDeleteKeyHash = deleteKeyHash;
         storedNextPKH = nextPKH;
-        wipeAccumulatedData();
-
     }
     @signer(submitter)
     function deleteKeyByPKHStepTwo(
+        address submitter,
         bytes32 nextPKH,
         bytes32 confirmDeleteKeyHash
     )
         external
-
+        onlyLamportMaster(
+            submitter,
+            nextPKH,
+            abi.encodePacked(confirmDeleteKeyHash)
+        )
     {
-        bytes memory prepacked = abi.encodePacked(confirmDeleteKeyHash);
-        submitterKey = tx.accounts.submitter.key;
-
-        bool lamportCheckPassed = performLamportMasterCheckInternal(
-            nextPKH, 
-            prepacked
-        );
-        require(lamportCheckPassed, "Lamport Master validation failed");
-        // Calculate the current public key hash (currentPKH)
         AccumulatedData storage data = pendingValidations[tx.accounts.submitter.key];
 
+        // Calculate the current public key hash (currentPKH)
         bytes32 currentPKH = keccak256(abi.encodePacked(data.currentpub));
         
         // Check if storedNextPKH is not the same as the current PKH
@@ -494,107 +404,144 @@ contract LamportBase2 {
         // Reset lastUsedDeleteKeyHash
         lastUsedDeleteKeyHash = bytes32(0);
         storedNextPKH = bytes32(0);
-        wipeAccumulatedData();
-
     }
 
 
 
+    // // get the current public key hash
+    // function getPKH() public view returns (bytes32) {
+    //     return pkh;
+    // }
 
-//     //@signer(submitter)
-//     // modifier onlyLamportMaster(bytes32 nextPKH, bytes memory prepacked) {
-//     //     require(initialized, "LamportBase: not initialized");
-//     //     AccumulatedData storage data = pendingValidations[tx.accounts.submitter.key];
+    // lamport 'verify' logic
+    function verify_u256(
+        uint256 bits,
+        bytes[256] calldata sig,
+        bytes32[2][256] calldata pub
+    ) public pure returns (bool) {
+        unchecked {
+            for (uint256 i = 0; i < 256; i++) {
+                if (
+                    pub[i][((bits & (1 << (255 - i))) > 0) ? 1 : 0] !=
+                    keccak256(sig[i])
+                ) return false;
+            }
 
-//     //     bytes32 pkh = keccak256(abi.encodePacked(currentpub));
-//     //     if (keyData[pkh].keyType != KeyType.MASTER) {
-//     //         wipeAccumulatedData(tx.accounts.submitter.key); // Wipe data before reverting if not a master key
-//     //         revert("LamportBase: Not a master key");
-//     //     }
-//     //     uint256 hashedData = uint256(keccak256(abi.encodePacked(prepacked, nextPKH)));
-//     //     emit LogLastCalculatedHash(hashedData);
-
-//     //     bool verificationResult = verify_u256(hashedData, data.sig, data.currentpub);
-
-//     //     lastVerificationResult = verificationResult;
-
-//     //     if (!verificationResult) {
-//     //         emit VerificationFailed(hashedData);
-//     //         wipeAccumulatedData(tx.accounts.submitter.key);
-//     //         revert("LamportBase: Verification failed");
-//     //     } else {
-//     //         emit PkhUpdated(keyData[pkh].keyType, pkh, nextPKH);
-//     //         //wipeAccumulatedData(tx.accounts.submitter.key);
-//     //         updateKey(pkh, nextPKH);
-//     //     }
-
-//     //     _;
-//     // }
-//     modifier onlyLamportMaster(address submitter, bytes32 nextPKH, bytes memory prepacked) {
-//         require(initialized, "LamportBase: not initialized");
-//         AccumulatedData storage data = pendingValidations[submitter];
-//         submitterKey = submitter;
-//         bytes32 pkh = keccak256(abi.encodePacked(data.currentpub));
-//         if (keyData[pkh].keyType != KeyType.MASTER) {
-//             wipeAccumulatedData();
-//             revert("LamportBase: Not a master key");
-//         }
-
-//         uint256 hashedData = uint256(keccak256(abi.encodePacked(prepacked, nextPKH)));
-//         emit LogLastCalculatedHash(hashedData);
-
-//         bool verificationResult = verify_u256(hashedData, data.sig, data.currentpub);
-//         lastVerificationResult = verificationResult;
-
-//         if (!verificationResult) {
-//             emit VerificationFailed(hashedData);
-//             wipeAccumulatedData();
-//             revert("LamportBase: Verification failed");
-//         } else {
-//             //emit PkhUpdated(keyData[pkh].keyType, pkh, nextPKH);
-//             updateKey(pkh, nextPKH);
-//         }
-
-//         _;
-//     }
-//     // function updateKey(bytes32 oldPKH, bytes32 newPKH) internal {
-//     //     require(keyData[oldPKH].pkh != 0, "LamportBase: No such key");
-//     //     keyData[oldPKH].pkh = newPKH; // Update the public key hash in the key data mapping
-//     //     emit PkhUpdated(keyData[oldPKH].keyType, oldPKH, newPKH);
-//     // }
-
-
-
-
-    // //@signer(submitter)
-    // modifier onlyLamportOracle(address submitter, bytes32 nextPKH, bytes memory prepacked) {
+            return true;
+        }
+    }
+    //@signer(submitter)
+    // modifier onlyLamportMaster(bytes32 nextPKH, bytes memory prepacked) {
     //     require(initialized, "LamportBase: not initialized");
-    //     AccumulatedData storage data = pendingValidations[submitter];
-    //     submitterKey = submitter;
+    //     AccumulatedData storage data = pendingValidations[tx.accounts.submitter.key];
 
-    //     bytes32 pkh = keccak256(abi.encodePacked(data.currentpub));
-    //     if (keyData[pkh].keyType != KeyType.ORACLE) {
-    //         wipeAccumulatedData(); // Wipe data before reverting if not an oracle key
-    //         revert("LamportBase: Not an oracle key");
+    //     bytes32 pkh = keccak256(abi.encodePacked(currentpub));
+    //     if (keyData[pkh].keyType != KeyType.MASTER) {
+    //         wipeAccumulatedData(tx.accounts.submitter.key); // Wipe data before reverting if not a master key
+    //         revert("LamportBase: Not a master key");
     //     }
-
     //     uint256 hashedData = uint256(keccak256(abi.encodePacked(prepacked, nextPKH)));
     //     emit LogLastCalculatedHash(hashedData);
 
     //     bool verificationResult = verify_u256(hashedData, data.sig, data.currentpub);
+
     //     lastVerificationResult = verificationResult;
 
     //     if (!verificationResult) {
     //         emit VerificationFailed(hashedData);
-    //         wipeAccumulatedData();
+    //         wipeAccumulatedData(tx.accounts.submitter.key);
     //         revert("LamportBase: Verification failed");
     //     } else {
-    //         //emit PkhUpdated(keyData[pkh].keyType, pkh, nextPKH);
+    //         emit PkhUpdated(keyData[pkh].keyType, pkh, nextPKH);
+    //         //wipeAccumulatedData(tx.accounts.submitter.key);
     //         updateKey(pkh, nextPKH);
     //     }
 
-    //     _; // Proceed with the execution of the function that the modifier is applied to
+    //     _;
     // }
+    modifier onlyLamportMaster(address submitter, bytes32 nextPKH, bytes memory prepacked) {
+        require(initialized, "LamportBase: not initialized");
+        AccumulatedData storage data = pendingValidations[submitter];
+
+        bytes32 pkh = keccak256(abi.encodePacked(data.currentpub));
+        if (keyData[pkh].keyType != KeyType.MASTER) {
+            wipeAccumulatedData(submitter);
+            revert("LamportBase: Not a master key");
+        }
+
+        uint256 hashedData = uint256(keccak256(abi.encodePacked(prepacked, nextPKH)));
+        emit LogLastCalculatedHash(hashedData);
+
+        bool verificationResult = verify_u256(hashedData, data.sig, data.currentpub);
+        lastVerificationResult = verificationResult;
+
+        if (!verificationResult) {
+            emit VerificationFailed(hashedData);
+            wipeAccumulatedData(submitter);
+            revert("LamportBase: Verification failed");
+        } else {
+            emit PkhUpdated(keyData[pkh].keyType, pkh, nextPKH);
+            updateKey(pkh, nextPKH);
+        }
+
+        _;
+    }
+    // function updateKey(bytes32 oldPKH, bytes32 newPKH) internal {
+    //     require(keyData[oldPKH].pkh != 0, "LamportBase: No such key");
+    //     keyData[oldPKH].pkh = newPKH; // Update the public key hash in the key data mapping
+    //     emit PkhUpdated(keyData[oldPKH].keyType, oldPKH, newPKH);
+    // }
+
+    function updateKey(bytes32 oldPKH, bytes32 newPKH) internal {
+        require(keyData[oldPKH].pkh != 0, "LamportBase: No such key");
+
+        // Update the public key hash in the key data mapping
+        Key memory updatedKey = Key(keyData[oldPKH].keyType, newPKH);
+        keyData[newPKH] = updatedKey;
+
+        // Remove the old key from key data
+        delete keyData[oldPKH];
+
+        // Update the public key hash in the keys array
+        for (uint i = 0; i < keys.length; i++) {
+            if (keys[i].pkh == oldPKH) {
+                keys[i] = updatedKey;
+                break;
+            }
+        }
+
+        emit PkhUpdated(updatedKey.keyType, oldPKH, newPKH);
+    }
+
+
+    //@signer(submitter)
+    modifier onlyLamportOracle(address submitter, bytes32 nextPKH, bytes memory prepacked) {
+        require(initialized, "LamportBase: not initialized");
+        AccumulatedData storage data = pendingValidations[submitter];
+
+        bytes32 pkh = keccak256(abi.encodePacked(data.currentpub));
+        if (keyData[pkh].keyType != KeyType.ORACLE) {
+            wipeAccumulatedData(submitter); // Wipe data before reverting if not an oracle key
+            revert("LamportBase: Not an oracle key");
+        }
+
+        uint256 hashedData = uint256(keccak256(abi.encodePacked(prepacked, nextPKH)));
+        emit LogLastCalculatedHash(hashedData);
+
+        bool verificationResult = verify_u256(hashedData, data.sig, data.currentpub);
+        lastVerificationResult = verificationResult;
+
+        if (!verificationResult) {
+            emit VerificationFailed(hashedData);
+            wipeAccumulatedData(submitter);
+            revert("LamportBase: Verification failed");
+        } else {
+            emit PkhUpdated(keyData[pkh].keyType, pkh, nextPKH);
+            updateKey(pkh, nextPKH);
+        }
+
+        _; // Proceed with the execution of the function that the modifier is applied to
+    }
 
 
     bytes32 public lastUsedNextPKH;
@@ -615,41 +562,35 @@ contract LamportBase2 {
     // }
     @signer(submitter)
     function createMasterKeyStepOne(
+        address submitter,
         bytes32 nextPKH,
         bytes32 newmasterPKH
-    ) external 
-    {
-        bytes memory prepacked = abi.encodePacked(newmasterPKH);
-        submitterKey = tx.accounts.submitter.key;
-
-        bool lamportCheckPassed = performLamportMasterCheckInternal(
+    ) external onlyLamportMaster(
+            submitter, 
             nextPKH, 
-            prepacked
-        );
-        require(lamportCheckPassed, "Lamport Master validation failed");
+            abi.encodePacked(newmasterPKH)
+        ) 
+    {
+        // Save the used master NextPKH in a global variable
         lastUsedNextPKH = nextPKH;
-        wipeAccumulatedData();
+        wipeAccumulatedData(submitter);
     }
     @signer(submitter)
     function createMasterKeyStepTwo(
+        address submitter,
         bytes32 nextPKH,
         bytes32 newmasterPKH
     )
         external
-
+        onlyLamportMaster(
+            submitter,
+            nextPKH,
+            abi.encodePacked(newmasterPKH)
+        )
     {
-        bytes memory prepacked = abi.encodePacked(newmasterPKH);
-        submitterKey = tx.accounts.submitter.key;
-
-        bool lamportCheckPassed = performLamportMasterCheckInternal(
-            nextPKH, 
-            prepacked
-        );
-        require(lamportCheckPassed, "Lamport Master validation failed");
-        // Check if the used master NextPKH matches the last used PKH
-
         AccumulatedData storage data = pendingValidations[tx.accounts.submitter.key];
 
+        // Check if the used master NextPKH matches the last used PKH
         bytes32 currentPKH = keccak256(abi.encodePacked(data.currentpub));
         bool pkhMatched = (lastUsedNextPKH != currentPKH);
         //require(lastUsedNextPKH != nextPKH, "LamportBase: Same master key is being used again, need a separate one");
@@ -660,47 +601,42 @@ contract LamportBase2 {
         addKey(KeyType.MASTER, newmasterPKH);
 
         // Reset lastUsedNextPKH
-        wipeAccumulatedData();
+        wipeAccumulatedData(tx.accounts.submitter.key);
         lastUsedNextPKH = bytes32(0);
     }
     @signer(submitter)
     function createOracleKeyStepOne(
+        address submitter,
         bytes32 nextPKH,
         bytes32 newOraclePKH
     )
         external
-
+        onlyLamportMaster(
+            submitter,
+            nextPKH,
+            abi.encodePacked(newOraclePKH)
+        )
     {
-        bytes memory prepacked = abi.encodePacked(newOraclePKH);
-        submitterKey = tx.accounts.submitter.key;
-
-        bool lamportCheckPassed = performLamportMasterCheckInternal(
-            nextPKH, 
-            prepacked
-        );
-        require(lamportCheckPassed, "Lamport Master validation failed"); // Save the used master NextPKH in a global variable
-        wipeAccumulatedData();
+        // Save the used master NextPKH in a global variable
+        wipeAccumulatedData(tx.accounts.submitter.key);
         lastUsedNextPKH = nextPKH;
         
     }
     @signer(submitter)
     function createOracleKeyStepTwo(
+        address submitter,
         bytes32 nextPKH,
         bytes32 newOraclePKH
     )
         external
-
+        onlyLamportMaster(
+            submitter,
+            nextPKH,
+            abi.encodePacked(newOraclePKH)
+        )
     {
-        bytes memory prepacked = abi.encodePacked(newOraclePKH);
-        submitterKey = tx.accounts.submitter.key;
-
-        bool lamportCheckPassed = performLamportMasterCheckInternal(
-            nextPKH, 
-            prepacked
-        );
-        require(lamportCheckPassed, "Lamport Master validation failed");// Check if the used master NextPKH matches the last used PKH
         AccumulatedData storage data = pendingValidations[tx.accounts.submitter.key];
-
+        // Check if the used master NextPKH matches the last used PKH
         bytes32 currentPKH = keccak256(abi.encodePacked(data.currentpub));
         bool pkhMatched = (lastUsedNextPKH != currentPKH);
         //require(lastUsedNextPKH != nextPKH, "LamportBase: Same master key is being used again, need a separate one");
@@ -711,9 +647,27 @@ contract LamportBase2 {
         addKey(KeyType.ORACLE, newOraclePKH);
 
         // Reset lastUsedNextPKH
-        wipeAccumulatedData();
+        wipeAccumulatedData(tx.accounts.submitter.key);
         lastUsedNextPKH = bytes32(0);
     }
 
-}
 
+    // function createOracleKeyFromMaster(
+    //     bytes32[2][256] calldata currentpub,
+    //     bytes32 nextPKH,
+    //     bytes[256] calldata sig,
+    //     bytes32 neworaclePKH
+    // )
+    //     public
+    //     onlyLamportMaster(
+    //         currentpub,
+    //         sig,
+    //         nextPKH,
+    //         abi.encodePacked(neworaclePKH)
+    //     )
+    // {
+        
+    //     addKey(KeyType.ORACLE, neworaclePKH);
+      
+    // }
+}
