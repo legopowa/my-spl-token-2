@@ -19,7 +19,7 @@ async def main():
     # Close all HTTP clients in the workspace.
     await close_workspace(workspace)
     print(program.rpc)
-    create_token = await program.rpc["create_token"](ctx=Context(accounts={
+    create_token = await program.rpc["create_token_mint"](ctx=Context(accounts={
         "mint": mint.pubkey(),
         "signer": program.provider.wallet.payer.pubkey(),
         "system_program": SYS_PROGRAM_ID,
